@@ -1,0 +1,4 @@
+opencv-python==4.11.0.86
+torch torchvision --index-url https://download.pytorch.org/whl/cu128
+ultralytics==8.3.169
+label-studio
