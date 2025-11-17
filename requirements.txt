@@ -2,3 +2,5 @@ opencv-python
 customtkinter
 pyyaml
 Pillow
+pywin32
+ultralytics
