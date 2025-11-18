@@ -16,12 +16,52 @@ class FootDetector:
         self.screen_h = win32api.GetSystemMetrics(1)
         
     def detect_foot(self, image):
-        results = self.model(image)
+        results = self.model(image, verbose=False)
         return results
    
-    def move_cursor(self, x, y):
+    def _move_cursor(self, x, y):
         win32api.SetCursorPos((x, y))
 
+    def move_cursor(self, box, x, y):
+        """Di chuyển con trỏ đến vị trí x, y (giới hạn trong limit box)
+
+        Args:
+            box (dict): A dictionary containing the coordinates of the limit box.
+            x (int): Tọa độ x của điểm mốc trên khung hình
+            y (int): Tọa độ y của điểm mốc trên khung hình
+        Returns:
+            None
+        """
+        x1, x2, y1, y2 = box['x1'], box['x2'], box['y1'], box['y2']
+        
+        # 1. Giới hạn tọa độ trong vùng box trên frame
+        x_limited = max(x1, min(x, x2))
+        y_limited = max(y1, min(y, y2))
+        
+        if x_limited <= x1 or x_limited >= x2 or y_limited <= y1 or y_limited >= y2:
+            return
+        
+        print(f"Limited Coordinates: ({x_limited}, {y_limited})")
+        # Kích thước của limit box trên frame
+        box_width = x2 - x1
+        box_height = y2 - y1
+        
+        if box_width == 0 or box_height == 0:
+            # Xử lý trường hợp box rỗng hoặc có chiều rộng/cao bằng 0
+            return 
+
+        # 2. Tính Tỷ lệ Tương đối của (x, y) bên trong limit box (0 đến 1)
+        # Bắt đầu từ tọa độ (x1, y1) của box
+        relative_x = (x_limited - x1) / box_width
+        relative_y = (y_limited - y1) / box_height
+
+        # 3. Chuyển đổi Tỷ lệ Tương đối này sang Tọa độ Màn hình (scale toàn màn hình)
+        # Tọa độ màn hình sẽ là Tỷ lệ * Kích thước màn hình
+        screen_x = int(relative_x * self.screen_w)
+        screen_y = int(relative_y * self.screen_h)
+    
+        self._move_cursor(screen_x, screen_y)
+        
     # Read YAML config file
     def _read_config(self, config_path):
         """Đọc file YAML
@@ -66,21 +106,30 @@ if __name__ == "__main__":
         
         # Phát hiện điểm mốc trong khung hình
         results = detector.detect_foot(frame)
-        box = detector.get_limit_box(name="Click_zone")
+        
+        click_box = detector.get_limit_box(name="Click_zone")
+        move_box = detector.get_limit_box(name="Rec_area")
         
         for result in results:
             annotated_frame = result.plot()
-            cv2.imshow('Foot Detection', annotated_frame)
             for box in result.boxes:
-                x1, y1, x2, y2 = map(int, box.xyxy[0])
-                cx = (x1 + x2) // 2
-                cy = (y1 + y2) // 2
-                # Chuyển đổi tọa độ khung hình sang tọa độ màn hình
-                screen_x = int(cx / frame.shape[1] * detector.screen_w)
-                screen_y = int(cy / frame.shape[0] * detector.screen_h)
-                detector.move_cursor(screen_x, screen_y)
+                if box.cls[0] == 1: # '1' là mốc đỏ
+                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                    cx = (x1 + x2) // 2
+                    cy = (y1 + y2) // 2
+                    cv2.circle(annotated_frame, (cx, cy), 5, (0, 0, 255), -1)
+                    detector.move_cursor(move_box, cx, cy)
                 
+                elif box.cls[0] == 0: # '0' là mốc xanh
+                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                    cx = (x1 + x2) // 2
+                    cy = (y1 + y2) // 2
+                    cv2.circle(annotated_frame, (cx, cy), 5, (255, 0, 0), -1)
+                    
                 # Chuyển đổi tọa độ khung
+        cv2.rectangle(annotated_frame, (move_box["x1"], move_box["y1"]), (move_box["x2"], move_box["y2"]), (0, 255, 0), 2)
+        
+        cv2.imshow('Foot Detection', annotated_frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
