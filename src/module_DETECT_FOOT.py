@@ -3,6 +3,7 @@ import ultralytics
 import win32api
 import win32con
 import yaml
+import time
 
 MODEL_PATH = 'src/asset/model/YOLOv11-215pic.pt'
 YAML_CONFIG_PATH = 'src/asset/config/config.yaml'
@@ -15,6 +16,10 @@ class FootDetector:
         self.screen_w = win32api.GetSystemMetrics(0)
         self.screen_h = win32api.GetSystemMetrics(1)
         
+        # Value
+        self.click_state = False # Nếu chuột ở bên trong box sẽ True
+        self.click_delay = 0.5   # Thời gian delay giữa các lần click (nếu cần)
+        self.click_lasttime = 0.0
     def detect_foot(self, image):
         results = self.model(image, verbose=False)
         return results
@@ -61,7 +66,63 @@ class FootDetector:
         screen_y = int(relative_y * self.screen_h)
     
         self._move_cursor(screen_x, screen_y)
+    
+    def click_cursor(self, box, x, y):
+        """Thực hiện thao tác click chuột trái, phải và thao tác cuộn chuột.
+
+        Args:
+            box (dict): A dictionary containing the coordinates of the limit box.
+            x (int): Tọa độ x của điểm mốc trên khung hình
+            y (int): Tọa độ y của điểm mốc trên khung hình
+        Returns:
+            None
+        """
+        x1, x2, y1, y2 = box['x1'], box['x2'], box['y1'], box['y2']
         
+        # 1. Giới hạn tọa độ trong vùng box trên frame
+        x_limited = max(x1, min(x, x2))
+        y_limited = max(y1, min(y, y2))
+        
+        self._left_right_click(x_limited, x1, x2)
+    
+            
+    def _left_right_click(self, x_limited, x1, x2, tolerance=5):
+        """ Thực hiện thao tác click chuột trái/phải
+        
+        Args:
+            x_limited (int): Tọa độ x đã được giới hạn trong box.
+            x1 (int): Tọa độ x1 của box.
+            x2 (int): Tọa độ x2 của box.
+            tolerance (int, optional): Độ dung sai để xác định vùng click. Mặc định là 5.
+        """
+        t = time.time()
+        inside_box = x_limited > x1 + tolerance and x_limited < x2 - tolerance
+        left_click = x_limited <= x1 + tolerance
+        right_click = x_limited >= x2 - tolerance
+        
+        # 1. Nếu ở trong box và chưa click thì đặt trạng thái click
+        if not self.click_state:
+            if inside_box:
+                self.click_state = True
+                self.click_lasttime = t
+            return
+    
+        # 2. Sau khi thực hiện click nhưng chưa đủ thời gian delay -> return
+        if t - self.click_lasttime < self.click_delay:
+            return
+        
+        # 3. Thực hiện click chuột trái hoặc phải
+        if left_click:
+            win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+            win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+        
+        elif right_click:
+            win32api.mouse_event(win32con.MOUSEEVENTF_RIGHTDOWN, 0, 0, 0, 0)
+            win32api.mouse_event(win32con.MOUSEEVENTF_RIGHTUP, 0, 0, 0, 0)
+            
+        self.click_state = False
+        self.click_lasttime = t
+            
     # Read YAML config file
     def _read_config(self, config_path):
         """Đọc file YAML
@@ -125,9 +186,11 @@ if __name__ == "__main__":
                     cx = (x1 + x2) // 2
                     cy = (y1 + y2) // 2
                     cv2.circle(annotated_frame, (cx, cy), 5, (255, 0, 0), -1)
+                    detector.click_cursor(click_box, cx, cy)
                     
                 # Chuyển đổi tọa độ khung
         cv2.rectangle(annotated_frame, (move_box["x1"], move_box["y1"]), (move_box["x2"], move_box["y2"]), (0, 255, 0), 2)
+        cv2.rectangle(annotated_frame, (click_box["x1"], click_box["y1"]), (click_box["x2"], click_box["y2"]), (0, 255, 0), 2)
         
         cv2.imshow('Foot Detection', annotated_frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
