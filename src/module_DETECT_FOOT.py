@@ -20,6 +20,7 @@ class FootDetector:
         self.click_state = False # Nếu chuột ở bên trong box sẽ True
         self.click_delay = 0.5   # Thời gian delay giữa các lần click (nếu cần)
         self.click_lasttime = 0.0
+        
     def detect_foot(self, image):
         results = self.model(image, verbose=False)
         return results
@@ -46,7 +47,6 @@ class FootDetector:
         if x_limited <= x1 or x_limited >= x2 or y_limited <= y1 or y_limited >= y2:
             return
         
-        print(f"Limited Coordinates: ({x_limited}, {y_limited})")
         # Kích thước của limit box trên frame
         box_width = x2 - x1
         box_height = y2 - y1
@@ -84,7 +84,6 @@ class FootDetector:
         y_limited = max(y1, min(y, y2))
         
         self._left_right_click(x_limited, x1, x2)
-    
             
     def _left_right_click(self, x_limited, x1, x2, tolerance=5):
         """ Thực hiện thao tác click chuột trái/phải
