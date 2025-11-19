@@ -18,6 +18,11 @@ class FootDetector:
         
         # Value
         self.click_state = False # Nếu chuột ở bên trong box sẽ True
+        self.last_box_state = False # Lưu trạng thái click trước đó
+        self.left_state = False
+        self.right_state = False
+        self.holding = False # Giữ trạng thái click
+        
         self.click_delay = 0.5   # Thời gian delay giữa các lần click (nếu cần)
         self.click_lasttime = 0.0
         
@@ -95,33 +100,67 @@ class FootDetector:
             tolerance (int, optional): Độ dung sai để xác định vùng click. Mặc định là 5.
         """
         t = time.time()
-        inside_box = x_limited > x1 + tolerance and x_limited < x2 - tolerance
-        left_click = x_limited <= x1 + tolerance
-        right_click = x_limited >= x2 - tolerance
+
+        left_bound  = x1 + tolerance
+        right_bound = x2 - tolerance
+        inside_box  = left_bound < x_limited < right_bound
+
+        left_click_prev  = self.left_state
+        right_click_prev = self.right_state
         
-        # 1. Nếu ở trong box và chưa click thì đặt trạng thái click
+        # 0. Kiểm tra đã ở trong box hay chưa, trước khi xử lý tiếp tục
+        if not self.last_box_state and not self.click_state:
+            self.last_box_state = inside_box
+            return
+        
+        # 1. Nếu điểm mốc vẫn còn ngoài box -> lưu trạng thái click
+        if not self.click_state and not inside_box:
+            # lưu trạng thái click tại thời điểm vào box
+            self.left_state  = x_limited <= left_bound
+            self.right_state = x_limited >= right_bound
+            
+            self.click_state = True
+            self.click_lasttime = t
+            return
+        
         if not self.click_state:
-            if inside_box:
-                self.click_state = True
+            self.last_box_state = inside_box
+            return
+        
+        # 2. Nếu điểm mốc vẫn còn trong box -> thực hiện click
+        if inside_box:
+            if t - self.click_lasttime >= self.click_delay:
+                self.holding = False
+                self.click_state = False
                 self.click_lasttime = t
-            return
-    
-        # 2. Sau khi thực hiện click nhưng chưa đủ thời gian delay -> return
-        if t - self.click_lasttime < self.click_delay:
-            return
-        
-        # 3. Thực hiện click chuột trái hoặc phải
-        if left_click:
-            win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
-            win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
-        
-        elif right_click:
-            win32api.mouse_event(win32con.MOUSEEVENTF_RIGHTDOWN, 0, 0, 0, 0)
-            win32api.mouse_event(win32con.MOUSEEVENTF_RIGHTUP, 0, 0, 0, 0)
+                
+                if left_click_prev:
+                    win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+                elif right_click_prev:
+                    win32api.mouse_event(win32con.MOUSEEVENTF_RIGHTUP, 0, 0, 0, 0)
+                    
+                return
             
-        self.click_state = False
-        self.click_lasttime = t
+            if left_click_prev:
+                win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+                win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP,   0, 0, 0, 0)
+
+            elif right_click_prev:
+                win32api.mouse_event(win32con.MOUSEEVENTF_RIGHTDOWN, 0, 0, 0, 0)
+                win32api.mouse_event(win32con.MOUSEEVENTF_RIGHTUP,   0, 0, 0, 0)
+
+            self.click_lasttime = t
+            self.click_state = False
             
+        #. 3. Nếu điểm mốc rời khỏi box (giữ thời gian đủ lâu) -> giữ click
+        else:
+            if t - self.click_lasttime >= self.click_delay and self.holding == False:
+                self.holding = True
+                if left_click_prev:
+                    win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+                elif right_click_prev:
+                    win32api.mouse_event(win32con.MOUSEEVENTF_RIGHTDOWN, 0, 0, 0, 0)
+        
     # Read YAML config file
     def _read_config(self, config_path):
         """Đọc file YAML
@@ -180,7 +219,7 @@ if __name__ == "__main__":
                     cv2.circle(annotated_frame, (cx, cy), 5, (0, 0, 255), -1)
                     detector.move_cursor(move_box, cx, cy)
                 
-                elif box.cls[0] == 0: # '0' là mốc xanh
+                if box.cls[0] == 0: # '0' là mốc xanh
                     x1, y1, x2, y2 = map(int, box.xyxy[0])
                     cx = (x1 + x2) // 2
                     cy = (y1 + y2) // 2
