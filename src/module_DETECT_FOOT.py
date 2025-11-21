@@ -89,7 +89,8 @@ class FootDetector:
         y_limited = max(y1, min(y, y2))
         
         self._left_right_click(x_limited, x1, x2)
-            
+        self._scroll_cursor(y_limited, y1, y2)
+        
     def _left_right_click(self, x_limited, x1, x2, tolerance=5):
         """ Thực hiện thao tác click chuột trái/phải
         
@@ -160,7 +161,30 @@ class FootDetector:
                     win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
                 elif right_click_prev:
                     win32api.mouse_event(win32con.MOUSEEVENTF_RIGHTDOWN, 0, 0, 0, 0)
+      
+    def _scroll_cursor(self, y_limited, y1, y2, tolerance=5):
+        """ Thực hiện thao tác cuộn chột
         
+        Args:
+            y_limited (dict): Giới hạn tọa độ trục y
+            x1 (int): Tọa độ x của điểm mốc trên khung hình
+            y2 (int): Tọa độ y của điểm mốc trên khung hình
+        Returns:
+            None
+        """
+        inside_box = y1 + tolerance < y_limited < y2 - tolerance
+        
+        # 1. Kiểm tra đã ở trong box hay chưa, trước khi xử lý tiếp tục
+        if not self.last_box_state and not self.click_state:
+            self.last_box_state = inside_box        
+            return
+        
+        # 2. Thực hiện cuộn chuột
+        if y_limited >= y1 + tolerance:
+            win32api.mouse_event(win32con.MOUSEEVENTF_WHEEL, 0, 0, -120, 0)  # Cuộn xuống
+        elif y_limited <= y2 - tolerance:
+            win32api.mouse_event(win32con.MOUSEEVENTF_WHEEL, 0, 0, 120, 0)   # Cuộn lên
+            
     # Read YAML config file
     def _read_config(self, config_path):
         """Đọc file YAML
