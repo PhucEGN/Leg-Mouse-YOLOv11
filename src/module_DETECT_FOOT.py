@@ -180,10 +180,10 @@ class FootDetector:
             return
         
         # 2. Thực hiện cuộn chuột
-        if y_limited >= y1 + tolerance:
-            win32api.mouse_event(win32con.MOUSEEVENTF_WHEEL, 0, 0, -120, 0)  # Cuộn xuống
-        elif y_limited <= y2 - tolerance:
-            win32api.mouse_event(win32con.MOUSEEVENTF_WHEEL, 0, 0, 120, 0)   # Cuộn lên
+        if y_limited <= y1 + tolerance:
+            win32api.mouse_event(win32con.MOUSEEVENTF_WHEEL, 0, 0, 100, 0)  # Cuộn lên
+        elif y_limited >= y2 - tolerance:
+            win32api.mouse_event(win32con.MOUSEEVENTF_WHEEL, 0, 0, -100, 0)   # Cuộn xuống
             
     # Read YAML config file
     def _read_config(self, config_path):
