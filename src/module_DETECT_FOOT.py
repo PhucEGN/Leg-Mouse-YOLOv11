@@ -175,10 +175,11 @@ class FootDetector:
         inside_box = y1 + tolerance < y_limited < y2 - tolerance
         
         # 1. Kiểm tra đã ở trong box hay chưa, trước khi xử lý tiếp tục
-        if not self.last_box_state and not self.click_state:
-            self.last_box_state = inside_box        
+        if not self.last_box_state and not inside_box:        
             return
-        
+        elif not self.last_box_state and inside_box:
+            self.last_box_state = True
+            
         # 2. Thực hiện cuộn chuột
         if y_limited <= y1 + tolerance:
             win32api.mouse_event(win32con.MOUSEEVENTF_WHEEL, 0, 0, 100, 0)  # Cuộn lên
