@@ -63,14 +63,24 @@ def camera_thread(frame_queue):
         frame_queue.put(None)
         return
 
+    start = time.time()
+    frames = 0
+    fps = 0
     while True:
         ret, frame = cap.read()
         if not ret:
             frame_queue.put(None)
             break
-
+        
+        frames += 1
+        if time.time() - start >= 3:
+            print(f"Camera FPS: {fps}")
+            start = time.time()
+            frames = 0
+            
         # gửi frame sang YOLO process
         frame_queue.put(frame)
+        fps = frames / 3
         
         if cv2.waitKey(1) & 0xFF == ord('q'):
             frame_queue.put(None)

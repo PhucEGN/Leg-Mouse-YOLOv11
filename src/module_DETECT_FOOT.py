@@ -222,7 +222,8 @@ if __name__ == "__main__":
     # Giới hạn độ phân giải khung hình
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-
+    cap.set(cv2.CAP_PROP_FPS, 30)
+    
     while True:
         ret, frame = cap.read()
         if not ret:
