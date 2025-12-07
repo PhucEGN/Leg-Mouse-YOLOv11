@@ -9,7 +9,7 @@ SCALE = 0.7  # Tỷ lệ phóng to/thu nhỏ giao diện popup GUI
 # ============================
 # PROCESS: YOLO INFERENCE
 # ============================
-def yolo_process(frame_queue, result_queue):
+def yolo_process(frame_queue, result_queue, bbox_queue):
     """
     Nhận frame từ camera (queue), chạy YOLO, trả kết quả qua result_queue
     """
@@ -19,6 +19,8 @@ def yolo_process(frame_queue, result_queue):
     
     click_box = detector.get_limit_box(name="Click_zone")
     move_box = detector.get_limit_box(name="Rec_area")
+    
+    bbox_queue.put([click_box, move_box])
     while True:
         frame = frame_queue.get()
         
@@ -53,7 +55,7 @@ def yolo_process(frame_queue, result_queue):
 # ============================
 # THREAD: CAMERA CAPTURE
 # ============================
-def camera_thread(frame_queue):
+def camera_thread(frame_queue, bbox_queue):
     cap = cv2.VideoCapture(VIDEO_CAP, cv2.CAP_DSHOW)
     # Giới hạn độ phân giải khung hình
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
@@ -66,6 +68,9 @@ def camera_thread(frame_queue):
     start = time.time()
     frames = 0
     fps = 0
+    
+    lim_bbox = bbox_queue.get()
+    lim_box_move, lim_box_click = None, None
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -77,7 +82,13 @@ def camera_thread(frame_queue):
             print(f"Camera FPS: {fps}")
             start = time.time()
             frames = 0
-            
+        
+        if lim_bbox is not None and lim_box_move is None:
+            lim_box_move = [lim_bbox[0]['x1'], lim_bbox[0]['y1'], lim_bbox[0]['x2'], lim_bbox[0]['y2']]
+            lim_box_click = [lim_bbox[1]['x1'], lim_bbox[1]['y1'], lim_bbox[1]['x2'], lim_bbox[1]['y2']]
+        else:
+            cv2.rectangle(frame, (lim_box_move[0], lim_box_move[1]), (lim_box_move[2], lim_box_move[3]), (0, 255, 0), 2)
+            cv2.rectangle(frame, (lim_box_click[0], lim_box_click[1]), (lim_box_click[2], lim_box_click[3]), (0, 255, 0), 2)
         # gửi frame sang YOLO process
         frame_queue.put(frame)
         fps = frames / 3
@@ -97,14 +108,15 @@ if __name__ == "__main__":
 
     frame_queue = mp.Queue(maxsize=2)    # queue truyền frame sang YOLO
     result_queue = mp.Queue(maxsize=2)   # queue truyền kết quả YOLO về main
-    control_queue = mp.Queue(maxsize=2)
+    control_queue = mp.Queue(maxsize=1)  # queue điều khiển từ GUI sang YOLO
+    bbox_queue = mp.Queue(maxsize=1)     # queue truyền box giới hạn từ YOLO sang Camera
     
     # Khởi động YOLO process
-    yolo_p = mp.Process(target=yolo_process, args=(frame_queue, result_queue))
+    yolo_p = mp.Process(target=yolo_process, args=(frame_queue, result_queue, bbox_queue))
     yolo_p.start()
 
     # Khởi động thread camera
-    cam_t = threading.Thread(target=camera_thread, args=(frame_queue,), daemon=True)
+    cam_t = mp.Process(target=camera_thread, args=(frame_queue, bbox_queue), daemon=True)
     cam_t.start()
 
     # MAIN LOOP (UI chạy ở đây)
