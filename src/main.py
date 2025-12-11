@@ -156,6 +156,7 @@ def main(queue_frame, queue_control):
         cv2.rectangle(frame, (click_box["x1"], click_box["y1"]), (click_box["x2"], click_box["y2"]), (255, 0, 0), 2)
         
         # draw tol
+        """
         cv2.rectangle(
             frame, 
             (click_box["x1"] + -50, click_box["y1"] + -50), 
@@ -163,6 +164,7 @@ def main(queue_frame, queue_control):
             (255, 255, 0), 
             1
         )
+        """
         # ------------------------------------
         
         # --- HIỂN THỊ FPS LÊN KHUNG HÌNH ---
