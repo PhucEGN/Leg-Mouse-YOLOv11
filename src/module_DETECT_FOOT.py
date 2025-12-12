@@ -4,122 +4,189 @@ import win32api
 import win32con
 import yaml
 import time
-
+import math
+import os
+# ==================== CONSTANTS ====================
 MODEL_PATH = 'src/asset/model/YOLOv11-215pic.pt'
 YAML_CONFIG_PATH = 'src/asset/config/config.yaml'
+
+# ===================================================
+# CLASS 1: FOOT DETECTOR (Xử lý hình ảnh & AI)
+# ===================================================
 class FootDetector:
     def __init__(self, model_path=MODEL_PATH):
-        # Khởi tạo model YOLO
+        print(f"Loading YOLO model from: {model_path}...")
         self.model = ultralytics.YOLO(model_path)
+        print("Model loaded successfully.")
 
-        # Khởi tạo cursor control
+    def detect_foot(self, image):
+        """
+        Thực hiện nhận diện trên khung hình.
+        Tối ưu hóa tốc độ bằng cách resize input về 416x416.
+        """
+        results = self.model.predict(
+            source=image, 
+            imgsz=416,  # Tăng tốc độ xử lý
+            verbose=False, 
+            conf=0.5
+        )
+        return results
+
+
+# ===================================================
+# CLASS 2: CURSOR CONTROLLER (Điều khiển chuột & Cấu hình)
+# ===================================================
+class CursorController:
+    def __init__(self, config_path=YAML_CONFIG_PATH):
+        self.config_path = config_path
+        
         self.screen_w = win32api.GetSystemMetrics(0)
         self.screen_h = win32api.GetSystemMetrics(1)
         
-        # Value
-        self.click_state = False # Nếu chuột ở bên trong box sẽ True
-        self.last_box_state = False # Lưu trạng thái click trước đó
-        self.left_state = False
-        self.right_state = False
-        self.holding = False # Giữ trạng thái click
+        # --- CẤU HÌNH LÀM MƯỢT (SMOOTHING) ---
+        # Hệ số làm mượt (0.0 < alpha <= 1.0)
+        # Giá trị càng nhỏ: Chuột càng mượt nhưng có độ trễ (lag).
+        # Giá trị càng lớn: Chuột càng nhanh nhưng dễ bị rung.
+        # Khuyên dùng: 0.1 đến 0.3
+        self.smooth_factor = 0.35
         
-        self.click_delay = 0.5   # Thời gian delay giữa các lần click (nếu cần)
+        # Ngưỡng chống rung (Pixel): Nếu di chuyển nhỏ hơn mức này -> Bỏ qua
+        self.jitter_threshold = 9.0 
+        
+        # Lưu tọa độ thực tế hiện tại (Float để tính toán chính xác)
+        self.curr_x = 0.0
+        self.curr_y = 0.0
+        
+        # Khởi tạo tọa độ chuột hiện tại từ hệ thống
+        cur_pos = win32api.GetCursorPos()
+        self.curr_x, self.curr_y = float(cur_pos[0]), float(cur_pos[1])
+
+        # --- BIẾN TRẠNG THÁI CLICK/SCROLL ---
+        self.click_state = False      
+        self.last_box_state = False   
+        self.left_state = False       
+        self.right_state = False      
+        self.holding = False          
+        
+        self.click_delay = 0.5        
         self.click_lasttime = 0.0
-        
-    def detect_foot(self, image):
-        results = self.model(image, verbose=False)
-        return results
-   
-    def _move_cursor(self, x, y):
-        win32api.SetCursorPos((x, y))
 
+        # --- BIẾN CỜ THEO DÕI ---
+        # `has_entered_box`: Đã từng vào vùng click ít nhất một lần
+        # `outside_frame`: Đang ở ngoài frame hay không (dùng để reset lại trạng thái khi quay lại)
+        self.has_entered_box = False
+        self.outside_frame = False
+        # cache config file to reduce disk I/O
+        self._config_cache = None
+        self._config_mtime = None
+
+        # --- BIẾN CỜ THEO DÕI TRẠNG THÁI ---
+        self.has_entered_box = False  # Biến cờ để kiểm tra nếu đã vào box
+
+    # --- CÁC HÀM XỬ LÝ CONFIG (GIỮ NGUYÊN) ---
+    def _read_config(self):
+        try:
+            with open(self.config_path, 'r') as file:
+                return yaml.safe_load(file) or {}
+        except FileNotFoundError:
+            return {}
+
+    def get_limit_box(self, name="Click_zone"):
+        config = self._read_config()
+        box = config.get(name, {})
+        return {
+            "x1": box.get('x1', 0), "x2": box.get('x2', 0),
+            "y1": box.get('y1', 0), "y2": box.get('y2', 0)
+        }
+
+    # --- HÀM DI CHUYỂN CHUỘT (ĐÃ NÂNG CẤP) ---
     def move_cursor(self, box, x, y):
-        """Di chuyển con trỏ đến vị trí x, y (giới hạn trong limit box)
-
-        Args:
-            box (dict): A dictionary containing the coordinates of the limit box.
-            x (int): Tọa độ x của điểm mốc trên khung hình
-            y (int): Tọa độ y của điểm mốc trên khung hình
-        Returns:
-            None
+        """
+        Di chuyển con trỏ chuột với thuật toán Nội suy (Smoothing).
         """
         x1, x2, y1, y2 = box['x1'], box['x2'], box['y1'], box['y2']
         
-        # 1. Giới hạn tọa độ trong vùng box trên frame
+        # 1. Giới hạn tọa độ đầu vào trong vùng box
         x_limited = max(x1, min(x, x2))
         y_limited = max(y1, min(y, y2))
         
+        # Nếu nằm ngoài vùng giới hạn, không xử lý
         if x_limited <= x1 or x_limited >= x2 or y_limited <= y1 or y_limited >= y2:
             return
         
-        # Kích thước của limit box trên frame
         box_width = x2 - x1
         box_height = y2 - y1
-        
-        if box_width == 0 or box_height == 0:
-            # Xử lý trường hợp box rỗng hoặc có chiều rộng/cao bằng 0
-            return 
+        if box_width == 0 or box_height == 0: return 
 
-        # 2. Tính Tỷ lệ Tương đối của (x, y) bên trong limit box (0 đến 1)
-        # Bắt đầu từ tọa độ (x1, y1) của box
+        # 2. Tính tọa độ đích (Target) trên màn hình
         relative_x = (x_limited - x1) / box_width
         relative_y = (y_limited - y1) / box_height
-
-        # 3. Chuyển đổi Tỷ lệ Tương đối này sang Tọa độ Màn hình (scale toàn màn hình)
-        # Tọa độ màn hình sẽ là Tỷ lệ * Kích thước màn hình
-        screen_x = int(relative_x * self.screen_w)
-        screen_y = int(relative_y * self.screen_h)
-    
-        self._move_cursor(screen_x, screen_y)
-    
-    def click_cursor(self, box, x, y):
-        """Thực hiện thao tác click chuột trái, phải và thao tác cuộn chuột.
-
-        Args:
-            box (dict): A dictionary containing the coordinates of the limit box.
-            x (int): Tọa độ x của điểm mốc trên khung hình
-            y (int): Tọa độ y của điểm mốc trên khung hình
-        Returns:
-            None
-        """
-        x1, x2, y1, y2 = box['x1'], box['x2'], box['y1'], box['y2']
         
-        # 1. Giới hạn tọa độ trong vùng box trên frame
+        target_x = relative_x * self.screen_w
+        target_y = relative_y * self.screen_h
+
+        # --- THUẬT TOÁN LÀM MƯỢT (INTERPOLATION) ---
+        
+        # Tính khoảng cách giữa vị trí hiện tại và đích
+        dist = math.sqrt((target_x - self.curr_x)**2 + (target_y - self.curr_y)**2)
+        
+        # A. CHỐNG RUNG (Deadzone)
+        # Nếu khoảng cách di chuyển quá nhỏ (do nhiễu camera), giữ nguyên vị trí
+        if dist < self.jitter_threshold:
+            return
+
+        # B. NỘI SUY (Lerp: Linear Interpolation)
+        # Công thức: Current = Current + (Target - Current) * Alpha
+        
+        # (Tùy chọn) Dynamic Smoothing: Di chuyển nhanh thì mượt ít (để nhanh), chậm thì mượt nhiều
+        # alpha = self.smooth_factor
+        # if dist > 100: alpha = 0.5 # Ví dụ: di chuyển xa thì tăng tốc
+        
+        self.curr_x += (target_x - self.curr_x) * self.smooth_factor
+        self.curr_y += (target_y - self.curr_y) * self.smooth_factor
+        
+        # Cập nhật vị trí chuột thật
+        win32api.SetCursorPos((int(self.curr_x), int(self.curr_y)))
+
+    # --- CÁC HÀM CLICK/SCROLL (GIỮ NGUYÊN) ---
+    def click_cursor(self, box, x, y, tol=5):
+        x1, x2, y1, y2 = box['x1'], box['x2'], box['y1'], box['y2']
         x_limited = max(x1, min(x, x2))
         y_limited = max(y1, min(y, y2))
         
-        self._left_right_click(x_limited, x1, x2)
-        self._scroll_cursor(y_limited, y1, y2)
-        
-    def _left_right_click(self, x_limited, x1, x2, tolerance=5):
-        """ Thực hiện thao tác click chuột trái/phải
-        
-        Args:
-            x_limited (int): Tọa độ x đã được giới hạn trong box.
-            x1 (int): Tọa độ x1 của box.
-            x2 (int): Tọa độ x2 của box.
-            tolerance (int, optional): Độ dung sai để xác định vùng click. Mặc định là 5.
-        """
-        t = time.time()
+        # Nếu con trỏ bên ngoài box, đặt cờ và bỏ qua xử lý
+        if x <= x1 + tol or x >= x2 - tol or y <= y1 + tol or y >= y2 - tol:
+            print("Out of box, resetting state.")
+            self._reset()
+            return
 
+        # Kiểm tra có bên trong box hay không
+        if x > x1 and x < x2 and y > y1 and y < y2 and self.has_entered_box == False:
+            self.has_entered_box = True
+
+        # Nếu chưa từng vào box, không thực hiện thao tác
+        if not self.has_entered_box:
+            return
+
+        # Xử lý logic click và scroll khi đã vào box
+        self._handle_click_logic(x_limited, x1, x2)
+        self._handle_scroll_logic(y_limited, y1, y2)
+
+    def _handle_click_logic(self, x_limited, x1, x2, tolerance=5):
+        t = time.time()
         left_bound  = x1 + tolerance
         right_bound = x2 - tolerance
         inside_box  = left_bound < x_limited < right_bound
-
         left_click_prev  = self.left_state
         right_click_prev = self.right_state
         
-        # 0. Kiểm tra đã ở trong box hay chưa, trước khi xử lý tiếp tục
         if not self.last_box_state and not self.click_state:
             self.last_box_state = inside_box
             return
         
-        # 1. Nếu điểm mốc vẫn còn ngoài box -> lưu trạng thái click
         if not self.click_state and not inside_box:
-            # lưu trạng thái click tại thời điểm vào box
             self.left_state  = x_limited <= left_bound
             self.right_state = x_limited >= right_bound
-            
             self.click_state = True
             self.click_lasttime = t
             return
@@ -128,134 +195,125 @@ class FootDetector:
             self.last_box_state = inside_box
             return
         
-        # 2. Nếu điểm mốc vẫn còn trong box -> thực hiện click
         if inside_box:
             if t - self.click_lasttime >= self.click_delay:
                 self.holding = False
                 self.click_state = False
                 self.click_lasttime = t
-                
                 if left_click_prev:
                     win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
                 elif right_click_prev:
                     win32api.mouse_event(win32con.MOUSEEVENTF_RIGHTUP, 0, 0, 0, 0)
-                    
                 return
             
             if left_click_prev:
                 win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
-                win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP,   0, 0, 0, 0)
-
+                win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP,   0, 0, 0, 0) 
             elif right_click_prev:
                 win32api.mouse_event(win32con.MOUSEEVENTF_RIGHTDOWN, 0, 0, 0, 0)
-                win32api.mouse_event(win32con.MOUSEEVENTF_RIGHTUP,   0, 0, 0, 0)
+                win32api.mouse_event(win32con.MOUSEEVENTF_RIGHTUP,   0, 0, 0, 0) 
 
             self.click_lasttime = t
             self.click_state = False
-            
-        #. 3. Nếu điểm mốc rời khỏi box (giữ thời gian đủ lâu) -> giữ click
         else:
-            if t - self.click_lasttime >= self.click_delay and self.holding == False:
+            if t - self.click_lasttime >= self.click_delay and not self.holding:
                 self.holding = True
                 if left_click_prev:
                     win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
                 elif right_click_prev:
                     win32api.mouse_event(win32con.MOUSEEVENTF_RIGHTDOWN, 0, 0, 0, 0)
-      
-    def _scroll_cursor(self, y_limited, y1, y2, tolerance=5):
-        """ Thực hiện thao tác cuộn chột
-        
-        Args:
-            y_limited (dict): Giới hạn tọa độ trục y
-            x1 (int): Tọa độ x của điểm mốc trên khung hình
-            y2 (int): Tọa độ y của điểm mốc trên khung hình
-        Returns:
-            None
-        """
+
+    def _handle_scroll_logic(self, y_limited, y1, y2, tolerance=5):
         inside_box = y1 + tolerance < y_limited < y2 - tolerance
-        
-        # 1. Kiểm tra đã ở trong box hay chưa, trước khi xử lý tiếp tục
         if not self.last_box_state and not inside_box:        
             return
         elif not self.last_box_state and inside_box:
             self.last_box_state = True
-            
-        # 2. Thực hiện cuộn chuột
+        
         if y_limited <= y1 + tolerance:
-            win32api.mouse_event(win32con.MOUSEEVENTF_WHEEL, 0, 0, 100, 0)  # Cuộn lên
+            win32api.mouse_event(win32con.MOUSEEVENTF_WHEEL, 0, 0, 100, 0)   
         elif y_limited >= y2 - tolerance:
-            win32api.mouse_event(win32con.MOUSEEVENTF_WHEEL, 0, 0, -100, 0)   # Cuộn xuống
-            
-    # Read YAML config file
-    def _read_config(self, config_path):
-        """Đọc file YAML
-
-        Args:
-            config_path (str): Đường dẫn tới file cấu hình YAML.
-
-        Returns:
-            dict: Nội dung của file YAML dưới dạng dictionary.
-        """
-        with open(config_path, 'r') as file:
-            config = yaml.safe_load(file)
-        return config
-    
-    # Get Limit Box from config
-    def get_limit_box(self, config_path=YAML_CONFIG_PATH, name="Click_zone"):
-        """Get the limit box coordinates from the YAML configuration file.
-
-        Args:
-            config_path (str, optional): Path to the YAML config file. Defaults to YAML_CONFIG_PATH.
-            name (str, optional): The name of the box section in the config. Defaults to "Click_zone".
-        Returns:
-            dict: A dictionary containing the coordinates of the limit box.
-        """
-        config = self._read_config(config_path)
-        box = config.get(name, {})
-        x1, x2, y1, y2 = box.get('x1', 0), box.get('x2', 0), box.get('y1', 0), box.get('y2', 0)
-        diction = {"x1": x1, "x2": x2, "y1": y1, "y2": y2}
-        return diction
-    
+            win32api.mouse_event(win32con.MOUSEEVENTF_WHEEL, 0, 0, -100, 0)
+        
+    def _reset(self):
+        self.click_state = False
+        self.last_box_state = False
+        self.left_state = False
+        self.right_state = False
+        self.holding = False
+        self.has_entered_box = False  # Reset trạng thái đã vào box
+# ===================================================
+# MAIN PROGRAM
+# ===================================================
 if __name__ == "__main__":
-    detector = FootDetector()
+    # 1. Khởi tạo các module
+    detector = FootDetector()          # Load model
+    controller = CursorController()    # Load config & mouse logic
+    
+    # 2. Khởi tạo Camera
     cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-    # Giới hạn độ phân giải khung hình
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    cap.set(cv2.CAP_PROP_FPS, 30)
+    
+    # --- Biến đo FPS ---
+    prev_time = time.time()
+    current_fps = 0.0
+
+    print("System Ready. Press 'q' to exit.")
 
     while True:
+        # --- Đo FPS ---
+        current_time = time.time()
+        time_diff = current_time - prev_time
+        if time_diff > 0:
+            current_fps = 1.0 / time_diff
+        prev_time = current_time
+
+        # --- Đọc Frame ---
         ret, frame = cap.read()
         if not ret:
+            print("Cannot read frame.")
             break
         
-        # Phát hiện điểm mốc trong khung hình
+        # --- Bước 1: Phát hiện chân (YOLO Inference) ---
         results = detector.detect_foot(frame)
         
-        click_box = detector.get_limit_box(name="Click_zone")
-        move_box = detector.get_limit_box(name="Rec_area")
+        # --- Bước 2: Lấy cấu hình vùng điều khiển mới nhất ---
+        click_box = controller.get_limit_box(name="Click_zone")
+        move_box = controller.get_limit_box(name="Rec_area")
         
+        # --- Bước 3: Xử lý kết quả & Điều khiển chuột ---
         for result in results:
-            annotated_frame = result.plot()
             for box in result.boxes:
-                if box.cls[0] == 1: # '1' là mốc đỏ
-                    x1, y1, x2, y2 = map(int, box.xyxy[0])
-                    cx = (x1 + x2) // 2
-                    cy = (y1 + y2) // 2
-                    cv2.circle(annotated_frame, (cx, cy), 5, (0, 0, 255), -1)
-                    detector.move_cursor(move_box, cx, cy)
+                # Lấy tọa độ trung tâm
+                x1, y1, x2, y2 = map(int, box.xyxy[0])
+                cx = (x1 + x2) // 2
+                cy = (y1 + y2) // 2
                 
-                if box.cls[0] == 0: # '0' là mốc xanh
-                    x1, y1, x2, y2 = map(int, box.xyxy[0])
-                    cx = (x1 + x2) // 2
-                    cy = (y1 + y2) // 2
-                    cv2.circle(annotated_frame, (cx, cy), 5, (255, 0, 0), -1)
-                    detector.click_cursor(click_box, cx, cy)
+                cls_id = int(box.cls[0])
+                
+                # Class 1: Mốc đỏ (Di chuyển chuột)
+                if cls_id == 1: 
+                    cv2.circle(frame, (cx, cy), 5, (0, 0, 255), -1)
+                    controller.move_cursor(move_box, cx, cy)
+                
+                # Class 0: Mốc xanh (Click chuột)
+                elif cls_id == 0: 
+                    cv2.circle(frame, (cx, cy), 5, (255, 0, 0), -1)
+                    controller.click_cursor(click_box, cx, cy)
                     
-                # Chuyển đổi tọa độ khung
-        cv2.rectangle(annotated_frame, (move_box["x1"], move_box["y1"]), (move_box["x2"], move_box["y2"]), (0, 255, 0), 2)
-        cv2.rectangle(annotated_frame, (click_box["x1"], click_box["y1"]), (click_box["x2"], click_box["y2"]), (0, 255, 0), 2)
+        # --- Bước 4: Vẽ giao diện debug ---
+        # Vẽ khung giới hạn Move (Xanh lá)
+        cv2.rectangle(frame, (move_box["x1"], move_box["y1"]), (move_box["x2"], move_box["y2"]), (0, 255, 0), 2)
+        # Vẽ khung giới hạn Click (Xanh lá)
+        cv2.rectangle(frame, (click_box["x1"], click_box["y1"]), (click_box["x2"], click_box["y2"]), (0, 255, 0), 2)
         
-        cv2.imshow('Foot Detection', annotated_frame)
+        # Vẽ FPS
+        fps_text = f"FPS: {current_fps:.2f}"
+        cv2.putText(frame, fps_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        
+        cv2.imshow('Foot Detection', frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 

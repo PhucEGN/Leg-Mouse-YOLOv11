@@ -1,5 +1,5 @@
 import customtkinter as ctk
-from PIL import Image, ImageTk, ImageDraw
+from PIL import Image, ImageDraw
 import yaml
 
 YAML_PATH = "src/asset/config/config.YAML"   # <- use same filename as main/control
@@ -271,7 +271,7 @@ class GUI_frame:
 
     def periodic_send(self):
         self.send_data_to_queue()
-        self.root.after(500, self.periodic_send)
+        #self.root.after(500, self.periodic_send)
 
     # ==== Cập nhật video ====
     def get_frame(self, frame):
