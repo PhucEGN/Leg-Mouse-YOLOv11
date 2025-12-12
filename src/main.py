@@ -17,6 +17,9 @@ def cursor_worker(cursor_queue, controller, move_box, click_box, stop_event):
     """
     Luồng riêng chỉ để di chuyển chuột, tránh làm block luồng camera.
     """
+    
+    last_x_move, last_y_move = 0, 0
+    last_move_box = move_box
     while not stop_event.is_set():
         try:
             # Lấy dữ liệu từ queue, chờ tối đa 0.001s để không chiếm CPU
@@ -26,9 +29,13 @@ def cursor_worker(cursor_queue, controller, move_box, click_box, stop_event):
             action, x, y = data
             
             if action == "move":
+                last_x_move = x
+                last_y_move = y
+                last_move_box = move_box
                 controller.move_cursor(move_box, x, y)
             elif action == "click":
                 controller.click_cursor(click_box, x, y, -50)
+                controller.move_cursor(last_move_box, last_x_move, last_y_move)
                 
         except queue.Empty:
             continue
@@ -45,9 +52,14 @@ def main(queue_frame, queue_control):
     cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
     
     # Giới hạn độ phân giải khung hình
+    ap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)   # manual exposure
+    cap.set(cv2.CAP_PROP_EXPOSURE, -5)       # adjust to your environment
+    cap.set(cv2.CAP_PROP_GAIN, 20)           # compensate brightness
     cap.set(cv2.CAP_PROP_FPS, 30)
+    cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)
     
     # --- 2. KHỞI TẠO DETECTOR VÀ CONTROLLER ---
     detector = module_DETECT_FOOT.FootDetector()
