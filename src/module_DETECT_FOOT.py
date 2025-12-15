@@ -156,7 +156,7 @@ class CursorController:
         
         # Nếu con trỏ bên ngoài box, đặt cờ và bỏ qua xử lý
         if x <= x1 + tol or x >= x2 - tol or y <= y1 + tol or y >= y2 - tol:
-            print("Out of box, resetting state.")
+            #print("Out of box, resetting state.")
             self._reset()
             return
 

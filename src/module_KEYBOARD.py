@@ -42,7 +42,7 @@ class VirtualKeyboard:
             'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p',
             'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l',
             'z', 'x', 'c', 'v', 'b', 'n', 'm',
-            'CTRL', 'SHIFT', 'SPACE', 'BACKSPACE'
+            'CTRL', 'SHIFT', 'SPACE', 'BACKSPACE', 'CURSOR'
         ]
 
         keys = []
@@ -87,6 +87,11 @@ class VirtualKeyboard:
                 x = start_x + (self.key_size[0] + self.key_padding) * 6
                 y = start_y + 3 * (self.key_size[1] + self.key_padding)
             
+            elif key_text == 'CURSOR':
+                special_value = 2
+                x = start_x + (self.key_size[0] + self.key_padding) * 8
+                y = start_y + 3 * (self.key_size[1] + self.key_padding)
+                
             else:
                 # Hàng phím thứ 1 (Q - P)
                 special_value = 1
@@ -120,9 +125,9 @@ class VirtualKeyboard:
 
             # Tính toán vị trí chữ và vẽ chữ
             text_size = cv2.getTextSize(key_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
-            text_x = x1 + (self.key_size[0] * (2 if key_text in ['SPACE', 'CTRL', 'SHIFT', 'BACKSPACE'] else 1) - text_size[0]) // 2
+            text_x = x1 + (self.key_size[0] * (2 if key_text in ['SPACE', 'CTRL', 'SHIFT', 'BACKSPACE', 'CURSOR'] else 1) - text_size[0]) // 2
             text_y = y1 + (self.key_size[1] - text_size[1]) // 2 + text_size[1]
-            cv2.putText(frame, key_text.upper(), (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            cv2.putText(frame, key_text.upper(), (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
         return frame
 
