@@ -26,7 +26,7 @@ class FootDetector:
         """
         results = self.model.predict(
             source=image, 
-            imgsz=416,  # Tăng tốc độ xử lý
+            imgsz=640,  # Tăng tốc độ xử lý
             verbose=False, 
             conf=0.5
         )
