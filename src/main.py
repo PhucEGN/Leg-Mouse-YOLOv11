@@ -90,7 +90,7 @@ def keyboard_worker(cursor_queue, keyboard, keyboard_controller, stop_event, sho
 # =========================================================
 # HÀM CHÍNH (MAIN PROCESS)
 # =========================================================
-def main(queue_frame, queue_control):
+def main(queue_frame, queue_control, stop_event):
     cap = initialize_camera()
 
     detector = module_DETECT_FOOT.FootDetector()
@@ -124,7 +124,7 @@ def main(queue_frame, queue_control):
 
     prev_time = time.time()
 
-    while True:
+    while not stop_event.is_set():
         current_time = time.time()
         current_fps = 1.0 / (current_time - prev_time) if current_time != prev_time else 0.0
         prev_time = current_time
@@ -159,7 +159,7 @@ def main(queue_frame, queue_control):
 
                     if cls_id == 1:  # Mốc đỏ (move)
                         cv2.circle(frame, (cx, cy), 5, (0, 0, 255), -1)
-                        if cx < move_box["x1"] and time.time() - show_keyboard_time > 3:
+                        if cx < move_box["x1"] and time.time() - show_keyboard_time > 3 and not show_keyboard_event.is_set():
                             show_keyboard_event.set() if not show_keyboard_event.is_set() else show_keyboard_event.clear()
                             show_keyboard_time = time.time()
                         elif cx >= move_box["x1"]:
@@ -194,18 +194,25 @@ def main(queue_frame, queue_control):
             break
 
     stop_event.set()
+
+    t_cursor.join(timeout=1)
+    t_keyboard.join(timeout=1)
+
     cap.release()
     cv2.destroyAllWindows()
-    t_cursor.join()
-    t_keyboard.join()
-
+    
 if __name__ == "__main__":
-    mp.set_start_method("spawn")
+    mp.set_start_method("spawn", force=True)
 
     queue_frame = mp.Queue(maxsize=3)
     queue_control = mp.Queue(maxsize=3)
+    stop_event = mp.Event()
 
-    main_process = mp.Process(target=main, args=(queue_frame, queue_control))
+    main_process = mp.Process(
+        target=main,
+        args=(queue_frame, queue_control, stop_event),
+        daemon=False
+    )
     main_process.start()
 
     try:
@@ -213,7 +220,26 @@ if __name__ == "__main__":
         import customtkinter as ctk
 
         root = ctk.CTk()
-        app = module_GUI.GUI_frame(root, scale=SCALE, frame_queue=queue_frame, control_queue=queue_control)
+        app = module_GUI.GUI_frame(
+            root,
+            scale=SCALE,
+            frame_queue=queue_frame,
+            control_queue=queue_control,
+            #stop_event=stop_event     # ← truyền vào GUI
+        )
+
+        def on_close():
+            stop_event.set()
+            root.destroy()
+
+        root.protocol("WM_DELETE_WINDOW", on_close)
         root.mainloop()
+
     except KeyboardInterrupt:
-        pass
+        stop_event.set()
+
+    finally:
+        stop_event.set()
+        main_process.join(timeout=3)
+        if main_process.is_alive():
+            main_process.terminate()
